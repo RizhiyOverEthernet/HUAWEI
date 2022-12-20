@@ -1,0 +1,19 @@
+# Данная функция реализует подключение по SNMP к узлу сети и выполняет SNMP-WALK по указанному OID
+# В качестве аргумента передаётся адрес хоста (IP или domain), сам OID и слово чтения/записи для SNMP
+
+from pysnmp.hlapi import *  # Та самая библиотека для SNMP
+
+
+def walk(host, oid, secretWord):  # Объявление функции для SNMP-WALK
+    for (errorIndication,  # Необходимые переменные для SNMP engine, отвечающие за ошибки
+         errorStatus,  # Необходимые переменные для SNMP engine, отвечающие за ошибки
+         errorIndex,  # Необходимые переменные для SNMP engine, отвечающие за ошибки
+         varBinds) in nextCmd(SnmpEngine(),  # Переменная вхождения в цикл
+                              CommunityData(secretWord),  # указываем секретное слово
+                              UdpTransportTarget((host, 161)),  # указываем хост и порт
+                              ContextData(),  # Локальное хранилище данных функций SNMP
+                              ObjectType(ObjectIdentity(oid)),  # указываем OID
+                              lexicographicMode=False):  # Остановить итерацию, когда все переменные MIB покинут область действия исходных переменных MIB в varBinds
+
+        for varBind in varBinds:  # Объявление цикла вывода
+            print(varBind)  # Построчно снять данные с итерации
