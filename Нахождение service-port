@@ -1,0 +1,20 @@
+from pysnmp.hlapi import *  # Та самая библиотека для SNMP
+
+
+def lastSRV(host, communityWord):  # Объявление функции для SNMP-WALK
+    for (errorIndication,  # Необходимые переменные для движка SNMP, отвечающие за ошибки
+         errorStatus,  # Необходимые переменные для движка SNMP, отвечающие за ошибки
+         errorIndex,  # Необходимые переменные для движка SNMP, отвечающие за ошибки
+         varBinds) in nextCmd(SnmpEngine(),  # Переменная вхождения в цикл
+                              CommunityData(communityWord),  # указываем секретное слово
+                              UdpTransportTarget((host, 161)),  # указываем хост и порт
+                              ContextData(),  # Локальное хранилище данных функций SNMP
+                              ObjectType(ObjectIdentity('1.3.6.1.4.1.2011.5.14.5.1')),  # указываем OID
+                              lexicographicMode=False):  # Остановить итерацию, когда все переменные MIB покинут область действия исходных переменных MIB в varBinds
+
+        for varBind in varBinds:  # Объявление цикла вывода
+            varBind = str(varBind)  # Преобразования переменной в строку
+            plusSRV = varBind[varBind.find("=")+2:]  # Срез значения после "=" + 2
+            plusSRV = int(plusSRV)  # Перевод в целое число
+            currentSRV = plusSRV - 1  # Нахождение нужного значения
+            print(currentSRV)  # Построчно снять данных с итерации
