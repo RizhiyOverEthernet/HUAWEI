@@ -1,0 +1,30 @@
+# Данный код помогает найти slot/port для незарегистрированных ONT на OLT вендора HUAWEI, модели MA5608T
+# В качестве аргументов функции передаётся адрес хоста (IP или domain),  а также слово группы чтения или записи для SNMP. OID для них один
+
+from pysnmp.hlapi import *  # Библиотека для SNMP
+
+
+def FSP(host, secretWord):  # Объявление функции для SNMP-WALK
+    for (errorIndication,  # Необходимые переменные для SNMP engine, отвечающие за ошибки
+         errorStatus,  # Необходимые переменные для SNMP engine, отвечающие за ошибки
+         errorIndex,  # Необходимые переменные для SNMP engine, отвечающие за ошибки
+         varBinds) in nextCmd(SnmpEngine(),  # Переменная вхождения в цикл
+                              CommunityData(secretWord),  # указываем секретное слово
+                              UdpTransportTarget((host, 161)),  # указываем хост и порт
+                              ContextData(),  # Локальное хранилище данных функций SNMP
+                              ObjectType(ObjectIdentity('1.3.6.1.4.1.2011.6.128.1.1.2.48.1.2')),  # указываем OID
+                              lexicographicMode=False):  # Остановить итерацию, когда все переменные MIB покинут область действия исходных переменных MIB в varBinds
+
+        for varBind in varBinds:  # Объявление цикла вывода
+            print(varBind)  # Вывод полной строки
+            indexFSP = str(varBind)[48:].partition('.')[0]  # Тут вырезаем всё из строки, кроме индекса
+            indexFSP = int(indexFSP)  # Преобразуем его в число для дальнейших операций
+            firstStep = int(indexFSP-4194304000)  # Вычитаем значение 1 фрейма
+            if firstStep > 3840:  # Находим слот
+                S = str('1')  # Если значение больше 3840 - то это первый слот
+                secondStep = int(firstStep - 8192)  # Также вычитаем значение слота для поиска порта
+            else:  # Если всё же слот 0
+                S = str('0')  # Заносим данные
+                secondStep = firstStep  # Вычета нет - оставляем переменную неизменной
+            P = int(secondStep/256)  # Делим значение для поиска порта
+            print(S, P)  # Вывод S/P
