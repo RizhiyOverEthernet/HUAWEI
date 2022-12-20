@@ -1,7 +1,7 @@
 # Данный код помогает найти последний сервис-порт на OLT вендора HUAWEI, модели MA5608T
 # В качестве аргументов функции передаётся адрес хоста (IP или domain), а также слово группы чтения или записи для SNMP
 
-from pysnmp.hlapi import *  
+from pysnmp.hlapi import *  # Библиотека для SNMP
 
 
 def lastSRV(host, communityWord):  # Объявление функции для SNMP-WALK
