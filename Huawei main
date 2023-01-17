@@ -4,11 +4,14 @@
 # 4) На фирме есть всего 4 GPON OLT. Были идеи сделать таблицу с ними, чтобы брать данные с неё, но в этом нет необходимости
 # 5) Так как у нас терминалы только с 1 eth портом, то первое значение srv-profile всегда будет 1
 # 6) Данные по подсети, VLAN и MAC GPON лежат в базе данных NetManager
-# 7) Внешние адреса находятся на 4000 VLAN-е
+# 7) Внешние адреса находятся на 4000 VLAN-е, остальные распределены по районам
 # 8) Главная сложность приложения заключается в том, что все MIB huawei - закрыты. Пришлось искать всё самому
 # 9) Иногда серийные номера выдаются в utf-8, а не hex и их надо перекодировать
 # 10) Все OLT у нас модели MA5608T
 # 11) На сервере есть скрипт reboot, написанный на Expect. По домену коммутатора он производит его перезагрузку
+# 12) Весь список OLT находится в таблице GPON в базе данных rizhiy
+# 13) Учётные записи пользователей лежат в таблице accounts в базе данных rizhiy
+# 14) Логирование входов заносится в таблицу AAA в базе данных rizhiy
 # Теперь о самом приложении:
 # Нужно оно для работы с HUAWEI OLT. Раньше этим занимались только администраторы, но когда одному из администраторов это надоело (мне) было написано это приложении
 # Оно может собирать различную статистику и работать с терминалами. Как дополнительная функция была сделана перезагрузка коммутаторов. Это не HUAWEI конечно, но пускай этим занимаются операторы
@@ -17,18 +20,21 @@
 # Решил выложить его в открытый доступ. Я месяцами мучался, собирая данные по всей сети по HUAWEI и SNMP. Пускай другие не мучаются
 # Если у кого-то есть вопросы по приложению, то мой номер: 89670859891
 
+import sys  # Библиотека для системного выхода из приложения
+import getpass  # Библиотека для безопасного чтения пароля
+from pysnmp.error import PySnmpError  # Библиотека для отлова ошибок SNMP
 from colorama import init, Fore, Style  # Библиотека для цветных букв и стилей текста
 import paramiko  # Библиотека удалённого доступа оборудования по SSH
 import socket  # Библиотека для обработки ожидания во время ввода команд
 from pysnmp.hlapi import *  # SNMP библиотека
 import mysql.connector  # Библиотека обращения к SQL
 from tabulate import tabulate  # Библиотека для создания таблиц
-from art import *  # Библиотека для больших букв
+from art import tprint  # Библиотека для больших букв
 
 init()  # Взываем к главной функции библиотеки colorama. В дальнейшем её вызов будет только в виде Fore.ЦВЕТ или Style.СТИЛЬ
-arrayOLT = ['mez41-gpon6.malnet.ru', 'mez41-gpon7.malnet.ru', 'zhil2-gpon1.malnet.ru', 'sher18-gpon1.malnet.ru']  # Тут массив, в котором указаны все возможные хосты
-secretWord, hostname, port, password, username = 'password', 'host', 23, 'password', 'user'  # Конфиденциальные данные программы
-sArray, pArray, snArray, hostArray, indexArray, IDArray, snmp, currentArray = [], [], [], [], [], [], [], []  # Объявления массивов для их дальнейшего заполнения
+secretWord, hostname, port, password, username = 'pass', 'ip', 23, 'pass', 'user'  # Конфиденциальные данные программы
+sqlLogin, sqlPassword, sqlUrl = 'login', 'password', 'url'  # Конфиденциальные данные программы
+sArray, pArray, snArray, hostArray, indexArray, IDArray, snmp, currentArray, arrayOLT = [], [], [], [], [], [], [], [], []  # Объявления массивов для их дальнейшего заполнения
 
 
 def clear():  # Функция очистки массивов
@@ -44,9 +50,9 @@ def clear():  # Функция очистки массивов
 
 def sql(database, sqlStrings):  # Объявляем функцию работы с SQL. Она принимает в себя название базы данных и строку с запросом
     comment = mysql.connector.connect(  # Объявления класса подключения sql
-        host="host",  # Указываем хост
-        user="user",  # Указываем логин
-        password="password",  # Указываем пароль
+        host=sqlUrl,  # Указываем хост
+        user=sqlLogin,  # Указываем логин
+        password=sqlPassword,  # Указываем пароль
         database=database)  # Выбираем базу данных
     mycursor = comment.cursor()  # Приводим функцию к переменной для сокращения
     mycursor.execute(sqlStrings)  # Сам запрос sql, его отправка
@@ -132,6 +138,22 @@ def net(login):  # Функция получения IP по логину, а п
     return swIp, swDomain, userIp  # Возвращаем данные из функции. Домен типа host.malnet.ru, host и IP абонента
 
 
+def sqlArray(database, sqlStrings, massive, number):  # Объявляем функцию работы с SQL. Она принимает в себя название базы данных, выбор массива и элемента, а также строку с запросом
+    comment = mysql.connector.connect(  # Объявления класса подключения sql
+        host=sqlUrl,  # Указываем хост
+        user=sqlLogin,  # Указываем логин
+        password=sqlPassword,  # Указываем пароль
+        database=database)  # Выбираем базу данных
+    mycursor = comment.cursor()  # Приводим функцию к переменной для сокращения
+    mycursor.execute(sqlStrings)  # Сам запрос sql, его отправка
+    myresults = mycursor.fetchall()  # Перевод в строку для вывода. fetchall объявляет массовый вывод
+    for x in myresults:  # Цикл вывода
+        massive.append(str(x[number]))  # Наполнение массива
+
+
+sqlArray('rizhiy', 'SELECT * FROM  `GPON`;', arrayOLT, 2)  # Наполняем массивы с OLT
+
+
 def start():  # Описание главной функции
     clear()  # Очищаем массив
     col_names = ["Номер:", "Операция:"]  # Оглавление таблицы
@@ -160,14 +182,14 @@ def start():  # Описание главной функции
                     indexArray.append(indexFSP)  # Находим индекс терминала, заносим в массив
                     fsp(indexFSP)  # По функции находим F/S/P
 
-        if len(hostArray) < 1:  # Если объектов в массиве меньше 1 (0), то ONT нет
+        if len(hostArray) == 0:  # Если объектов в массиве меньше 1 (0), то ONT нет
             print(Fore.YELLOW)  # Объявляем цвет
             print("Все терминалы зарегистрированы!")  # Осведомление оператора, что все терминалы зарегистрированы
         else:  # Если же терминалы есть
-            if len(snArray) > 1:  # Если больше 1 терминала - оператор должен сделать выбор
+            if len(snArray) != 1:  # Если больше 1 терминала - оператор должен сделать выбор
                 for i in snArray:  # Для предоставления данных оператору переводим первые 8 символов в utf-8
-                    mac = i[:-8]  # Оставляем первые 8 символов
-                    ifirstChapter = bytes.fromhex(mac).decode('utf-8')  # Перекодируем в строку
+                    imac = i[:-8]  # Оставляем первые 8 символов
+                    ifirstChapter = bytes.fromhex(imac).decode('utf-8')  # Перекодируем в строку
                     mac = ifirstChapter + i[-8:]  # Склеиваем с остальными 8 символами
                     currentArray.append(mac)  # Добавляем в массив данные
                 print('Серийные номера: ' + str(currentArray).upper())  # Показать оператору серийные номера
@@ -205,7 +227,7 @@ def start():  # Описание главной функции
                         currentID = str(max(nums) + 1)  # Приведение к нормированному значению, находим наибольшее значение из этого + 1
 
                 sqlHost = hostArray[matchONT][:-10]  # Удаляем malnet.ru для sql запросов
-                isqlString = "select comment from Boxes WHERE net_address= '" + sqlHost + "' LIMIT 1;"  # Удаляем malnet.ru для sql запросов, по описанию находим данные
+                isqlString = "SELECT `comment` FROM `Boxes` WHERE `net_address`= '" + sqlHost + "' LIMIT 1;"  # Удаляем malnet.ru для sql запросов, по описанию находим данные
                 myresult = sql('NetManager', isqlString)  # Объявление вывода функции под переменную
                 subnet = myresult[2:myresult.find("MAC")]  # Слайс подсети
                 mac = myresult[myresult.find("MAC") + 3:myresult.find("VLAN")]  # Слайс мак-адреса
@@ -229,7 +251,7 @@ def start():  # Описание главной функции
                 iseventhString = "service-port " + currentSRV + " vlan " + matchVlan + " gpon 0/" + sArray[matchONT] + "/" + pArray[matchONT] + " ont " + currentID + " gemport 1 multi-service user-vlan " + matchVlan + "\n" + "\n"  # Строка регистрации
                 link(0.3, ifirstString, isecondString, ithirdString, ifourthString, ififthString, isixthString, iseventhString)
                 currentSN = snArray[matchONT].upper()  # Формирование серийного номера для sql-запроса
-                isqlString = "INSERT INTO ip (ip, subnet, sw_ip, sw_mac, sw_port, name) VALUES ('" + currentIP + "', '" + subnet + "', '" + sqlHost + "', '" + mac + "', '" + currentSN + "', 'huaweigpon')"  # Формирование sql запроса добавления
+                isqlString = "INSERT INTO `ip` (ip, subnet, sw_ip, sw_mac, sw_port, name) VALUES ('" + currentIP + "', '" + subnet + "', '" + sqlHost + "', '" + mac + "', '" + currentSN + "', 'huaweigpon')"  # Формирование sql запроса добавления
                 sql('dhcp', isqlString)  # SQL функция добавления IP-адреса
                 print(Fore.MAGENTA)  # Объявляем цвет
                 print('Регистрация успешна. IP-адрес абонента: ' + currentIP)  # Вывод IP-адреса
@@ -245,7 +267,7 @@ def start():  # Описание главной функции
             if '213.5.' in userIp or '93.188.' in userIp:  # Если внешний IP-адрес
                 vlan = '4000'  # Обозначаем VLAN
             else:  # Если не внешний
-                jsqlString = sql("NetManager", "select comment from Boxes WHERE net_address= '" + swDomain + "' LIMIT 1;")  # Находим VLAN по описанию
+                jsqlString = sql("NetManager", "SELECT `comment` FROM `Boxes` WHERE `net_address`= '" + swDomain + "' LIMIT 1;")  # Находим VLAN по описанию
                 vlan = jsqlString[jsqlString.find("VLAN") + 4:-3]  # Срезаем лишнее
             walk('1.3.6.1.4.1.2011.6.128.1.1.2.43.1.9', switchIp)  # Находим индекс по логину
             for j in snmp:  # Проходимся по массиву с SNMP
@@ -264,9 +286,9 @@ def start():  # Описание главной функции
             fourthString = 'interface gpon 0/' + sArray[0] + '\n'  # Переходим на интерфейс
             fifthString = 'ont delete ' + pArray[0] + ' ' + ontId + '\n'  # Удаляем ONT
             link(0.3, firstString, secondString, thirdString, fourthString, fifthString)  # Отправляем команды
-            delSqlString = "DELETE FROM `ip` WHERE `ip` = '" + userIp + "';"  # Удаляем IP из DHCP по SQL
+            delSqlString = "delete from `ip` where `ip` = '" + userIp + "';"  # Удаляем IP из DHCP по SQL
             sql('dhcp', delSqlString)  # Отправляем SQL-запрос
-            print('Удаление успешно')  # Осведомляем оператора
+            print('\nУдаление успешно')  # Осведомляем оператора
         else:  # Если же IP по логину не нашлось
             print('\nНеправильно указан логин. Повторите попытку')  # Осведомить оператора
 
@@ -276,9 +298,9 @@ def start():  # Описание главной функции
         col_names = ["GPON:", "Серийный номер:", "Статус:", "Логин:", "Потери:", "IP-адрес:"]  # Шапка таблицы
         swIp = net(login)[0]  # Находим домен коммутатора
         if 'gpon' in swIp:  # Если найден GPON
-            print('\nСобираю данные. Ожидайте...\n')  # Ожидание сборки данных
+            print('\nСобираю данные. Ожидайте...')  # Ожидание сборки данных
             userIp = net(login)[2]  # Находим IP
-            sqlString = "SELECT sw_port FROM ip WHERE ip = '" + userIp + "';"  # Находим SN по IP
+            sqlString = "SELECT `sw_port` FROM `ip` WHERE `ip` = '" + userIp + "';"  # Находим SN по IP
             serialNumber = sql('dhcp', sqlString)[2:-3]  # Отправляем запрос поиска
             walk('1.3.6.1.4.1.2011.6.128.1.1.2.43.1.3', swIp)  # Находим индекс по логину
             for i in snmp:  # Проходимся по массиву с SNMP
@@ -288,20 +310,26 @@ def start():  # Описание главной функции
                     i = i + matchString  # Собираем серийным номер
                 if serialNumber.lower() in i:  # Если нашёл запись с логином
                     ont = str(i[48:i.find('=') - 1])  # Срезаем лишнее
-            linkFind = get('1.3.6.1.4.1.2011.6.128.1.1.2.62.1.3.' + ont + '.1', swIp)  # SNMP для поиска статуса порта
+            linkFind = get('1.3.6.1.4.1.2011.6.128.1.1.2.46.1.15.' + ont, swIp)  # SNMP для поиска статуса порта
             statusInt = linkFind[linkFind.find('=') + 2:]  # Срез всё, кроме выходного значения
-            if statusInt == '5':  # Если ответ 5
-                status = 'В сети'  # То терминал в сети
+            if statusInt == '1':  # Если ответ 5
+                status = Fore.GREEN + 'В сети' + Fore.CYAN  # То терминал в сети
             else:  # Если нет
-                status = 'Не в сети'  # То он не в сети
+                status = Fore.RED + 'Не в сети' + Fore.CYAN  # То он не в сети
             powerFind = get('1.3.6.1.4.1.2011.6.128.1.1.2.51.1.6.' + ont, swIp)  # Поиск потерь
             if powerFind != '':  # Если потери найдены
-                powerInt = powerFind[powerFind.find('=') + 2:]  # Срезаем всё, кроме значения
+                try:  # Если получил значения мощности
+                    powerInt = powerFind[powerFind.find('=') + 2:]  # Срезаем всё, кроме значения
+                except AttributeError:  # Если вылезла ошибка
+                    powerInt = 10000000000000  # Сделать значение большим, чтобы была ошибка терминала
                 if powerInt != '':  # Если значение существует
                     power = float(int(powerInt) / 100 - 100)  # Находим потери
-                    power = '%.2f' % power  # Слайс до 2 знаков после запятой
+                    if power > 10:  # Если потери за пределами нормы
+                        power = Fore.RED + 'Ошибка терминала' + Fore.CYAN  # Добавляем ошибку
+                    else:  # Если всё хорошо
+                        power = '%.2f' % power  # Слайс до 2 знаков после запятой
             else:  # Если потери не найдены
-                power = 'Ошибка SNMP. Повторите попытку'  # Осведомить оператора
+                power = Fore.RED + 'Ошибка SNMP. Повторите попытку' + Fore.CYAN  # Осведомить оператора
             mac = serialNumber[:-8]  # Первые 8 знаков серийного номера
             ifirstChapter = bytes.fromhex(mac).decode('utf-8')  # Перекодируем в текст
             mac = ifirstChapter + serialNumber[-8:]  # Склеиваем в серийный номер, как на коробке
@@ -313,19 +341,18 @@ def start():  # Описание главной функции
             print('Неправильно указан логин. Повторите попытку')  # Осведомляем оператора
 
     elif choise == '4':  # Если просмотр всего коммутатора
-        clear()  # Очищаем массивы. НА ВСЯКИЙ СЛУЧАЙ
-        status, desc, serial, loss, ip, main, serNum = [], [], [], [], [], [], []  # Объявляем массивы для дальнейшей работы
-        col_names = ["Серийный номер:", "Логин:", "Статус:", "Потери:", "IP-адрес:"]  # Шапка таблицы
+        status, desc, serial, ip, main, serNum = [], [], [], [], [], []  # Объявляем массивы для дальнейшей работы
+        col_names = ["Серийный номер:", "Логин:", "Статус:", "IP-адрес:"]  # Шапка таблицы
         gpon = str(input('\nНапишите название GPON: ') + '.malnet.ru')  # Генерация домена для SNMP
-        if gpon == 'mez41-gpon7.malnet.ru' or gpon == 'mez41-gpon6.malnet.ru' or gpon == 'sher18-gpon1.malnet.ru' or gpon == 'zhil2-gpon1.malnet.ru':  # Если GPON существует
+        if gpon in arrayOLT:  # Если GPON существует
             print('\nСобираю данные. Ожидайте...\n')  # Осведомляем оператора
-            walk('1.3.6.1.4.1.2011.6.128.1.1.2.62.1.3', gpon)  # WALK для статуса порта
+            walk('1.3.6.1.4.1.2011.6.128.1.1.2.46.1.15', gpon)  # WALK для статуса порта
             for i in snmp:  # Пока i в массиве
                 i = str(i[i.find('=') + 2:])  # Срезаем всё, кроме данных
-                if i == '5':  # Если 5
-                    i = 'online'  # То онлайн
+                if i == '1':  # Если 5
+                    i = Fore.GREEN + 'В сети' + Fore.CYAN  # То онлайн
                 else:  # Если нет
-                    i = 'offline'  # То офлайн
+                    i = Fore.RED + 'Не в сети' + Fore.CYAN  # То офлайн
                 status.append(i)  # Добавляем в статус-массив
             snmp.clear()  # Очищаем массив
             walk('1.3.6.1.4.1.2011.6.128.1.1.2.43.1.9', gpon)  # WALK для описания ONT
@@ -344,20 +371,6 @@ def start():  # Описание главной функции
                 mac = ifirstChapter + i[-8:]  # Склеиваем в серийный номер
                 serial.append(mac.upper())  # Добавляем в массив номеров
             snmp.clear()  # Очищаем массив
-            walk('1.3.6.1.4.1.2011.6.128.1.1.2.51.1.6', gpon)  # Находим потери
-            for i in snmp:  # Пока i в массиве
-                i = i[i.find('=') + 2:]  # Срезаем всё, кроме значения
-                if i != '':  # Если значение не пустое
-                    i = float(int(i) / 100 - 100)  # Находим потери по формуле
-                    if i > 50:  # Если потери за пределами лимита
-                        i = 'Ошибка терминала'  # Заносим ошибку
-                    else:  # Если всё хорошо
-                        i = '%.2f' % i  # Срезаем всё, кроме 2 знаков после запятой
-                    loss.append(i)  # Заносим в массив
-                else:  # Если же потерь нет вообще
-                    loss.append('Ошибка терминала')  # Заносим ошибку
-            while len(desc) != len(loss):  # Так как WALK для потерь по вине HUAWEI может резко оборваться на середине, наполним его ошибками, дабы массивы были одинаковые по длине
-                loss.append('Ошибка SNMP')  # Те самые ошибки
             for i in serNum:  # Пока i в массиве
                 sqlString = "SELECT `ip` FROM `ip` WHERE `sw_port` = '" + i + "';"  # Находим IP по серийному номеру
                 address = sql('dhcp', sqlString)[2:-3]  # Срезаем скобки
@@ -371,12 +384,12 @@ def start():  # Описание главной функции
                 main[i].append(serial[i])  # Заполняем данными
                 main[i].append(desc[i])  # Заполняем данными
                 main[i].append(status[i])  # Заполняем данными
-                main[i].append(loss[i])  # Заполняем данными
                 main[i].append(ip[i])  # Заполняем данными
                 i += 1  # +1 к шагу
 
+            print(Fore.MAGENTA + 'Всего записей:', (len(desc)))  # Отображение общего количества записей
             print(Fore.CYAN + Style.BRIGHT + tabulate(main, headers=col_names, tablefmt="fancy_grid"))  # Отображаем таблицу
-            serial.clear(), desc.clear(), status.clear(), loss.clear(), ip.clear()  # Очищаем массивы за собой
+            serial.clear(), desc.clear(), status.clear(), ip.clear()  # Очищаем массивы за собой
         else:  # Если же такой GPON не найден
             print(Fore.RED)  # Объявляем цвет
             print('Неправильно указаны данные. Повторите попытку')  # Осведомляем оператора
@@ -387,9 +400,14 @@ def start():  # Описание главной функции
             print(Fore.RED + '\nПросили же не трогать поны без админов. Теперь заново всё...')  # Осведомление оператора
         elif 'core' in switch or 'asr' in switch:  # Если хотят перезагрузить серверную
             print(Fore.RED + '\nСовсем ебан*тый? По голове себе перезагрузи')  # Осведомление оператора
+        elif '213.5.24.64' in switch or '213.5.24.65' in switch or '213.5.24.66' in switch or '213.5.24.69' in switch:  # Если хотят перезагрузить серверную по IP
+            print(Fore.RED + '\nДох*я хитрый? Сказали не трогай')  # Осведомление оператора
+        elif 'ag' in switch:  # Если хотят перезагрузить агрегацию
+            print(Fore.RED + '\nНе рекомендуется перезагружать коммутаторы агрегации')  # Осведомление оператора
         else:  # Если всё ок
             rebootString = 'reboot ' + switch + '\n'  # Строка telnet
             link(1, rebootString)  # Брутфорс команд перезагрузки
+            print(Fore.YELLOW)  # Объявляем цвет
             print('Перезагрузка успешна')  # Осведомление оператора
 
     elif choise == '6':  # Если надо просмотреть инструкцию
@@ -401,7 +419,7 @@ def start():  # Описание главной функции
         print('        Я старался сделать интерфейс максимально простым и понятным для обычного человека. Вроде получилось.')  # Строка инструкции
         print('                                                                                                            ')  # Строка инструкции
         print('                                          Теперь о рабочих моментах:                                        ')  # Строка инструкции
-        print('        1) Сборка статистики занимает продолжительное время. От 30 секунд до 4 минут. Данное действие можно прервать.')  # Строка инструкции
+        print('        1) Сборка статистики занимает продолжительное время. От 5 секунд до 1 минуты. Данное действие можно прервать.')  # Строка инструкции
         print('        2) Если терминал выдаёт ошибку потерь - будет написано "Ошибка терминала". Если сам GPON, то "Ошибка SNMP".')  # Строка инструкции
         print('                   Если эти данные были сильно важны - их можно перезапросить. Заново запустить операцию.   ')  # Строка инструкции
         print('        3) По результату добавления терминала оператору надо скопировать IP-адрес и вставить в абонентское окно.')  # Строка инструкции
@@ -421,11 +439,38 @@ def start():  # Описание главной функции
     else:  # Если не тот номер
         print('\nНет такого номера. Повторите попытку')  # Возвращаемся
 
+try:  # Проверка на подключение к сети офиса
+    sql('dhcp', 'SELECT * FROM `ip` LIMIT 1;')  # Тестовый запрос
+except mysql.connector.errors.InterfaceError:  # Если не доступно, то
+    input(Fore.RED + '\nВы подключены к небезопасной сети. Для выхода нажмите enter ')  # Оповестить злоумышленника
+    sys.exit()  # Закрыть приложение
+else:  # Если всё хорошо
+    for step in arrayOLT:  # Пока переменная в массиве OLT
+        try:  # Попытаться
+            walk('1.3.6.1.4.1.2011.2.6.7.1.1.2.1.10', step)  # Сделать любой walk на все OLT
+        except PySnmpError:  # Если выходит ошибка
+            print(Fore.RED)  # Объявить цвет
+            input('Один из GPON недоступен. Срочно оповестите администраторов! Для выхода нажмите enter ')  # Оповестить оператора
+            sys.exit()  # Выход из приложения
 
-start()  # Вызываем основную функцию приложения
+    check = 0  # Чек-сумма для пароля
+    while check != 1:  # Пока чек-сумма не равна 1
+        print(Fore.GREEN)  # Объявляем цвет
+        operLogin = str(input('Введите ваш логин: '))  # Вводим логин
+        operPwd = getpass.getpass(prompt='\nВведите пароль: ')  # Вводим пароль
+        print()  # Отступ
+        pwdString = "SELECT `password` FROM `accounts` WHERE `login` = '" + operLogin + "';"  # Верный пароль из БД по логину
+        currentPwd = str(sql('rizhiy', pwdString))[2:-3]  # Выводим верный пароль
+        if len(operPwd) == 0 or len(operLogin) == 0 or currentPwd != operPwd:  # Если пароль или логин не введены
+            print(Fore.RED + 'Неправильно указаны данные. Повторите попытку')  # Осведомляем оператора
+        else:  # Если введены
+            check = 1  # Делаем чек 1 - аутентификация пройдена успешно
+            sql('rizhiy', "INSERT INTO `AAA` (login, time) VALUES ('" + operLogin + "', NOW());")
+    start()  # Вызываем основную функцию приложения
 while True:  # Бесконечный цикл
     print(Fore.GREEN)  # Объявляем зелёный цвет
     flag = str(input('Вернуться на главный экран? 1 - да, 0 - выйти: '))  # Нужно ли вернуться к главному меню
+    print()  # Отступ
     if flag == '1':  # Если ответ да
         start()  # Повторить функцию
     elif flag == '0':  # Если нет
