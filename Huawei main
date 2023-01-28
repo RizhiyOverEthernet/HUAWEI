@@ -252,6 +252,7 @@ def start():  # Описание главной функции
                 iseventhString = "service-port " + currentSRV + " vlan " + matchVlan + " gpon 0/" + sArray[matchONT] + "/" + pArray[matchONT] + " ont " + currentID + " gemport 1 multi-service user-vlan " + matchVlan + "\n" + "\n"  # Строка регистрации
                 link(0.3, ifirstString, isecondString, ithirdString, ifourthString, ififthString, isixthString, iseventhString)
                 currentSN = snArray[matchONT].upper()  # Формирование серийного номера для sql-запроса
+                sql('dhcp', "DELETE FROM `ip` WHERE `sw_port` = '" + currentSN + "';")  # Удаление дубликата, если таковой имеется
                 isqlString = "INSERT INTO `ip` (ip, subnet, sw_ip, sw_mac, sw_port, name) VALUES ('" + currentIP + "', '" + subnet + "', '" + sqlHost + "', '" + mac + "', '" + currentSN + "', 'huaweigpon')"  # Формирование sql запроса добавления
                 sql('dhcp', isqlString)  # SQL функция добавления IP-адреса
                 print(Fore.MAGENTA)  # Объявляем цвет
